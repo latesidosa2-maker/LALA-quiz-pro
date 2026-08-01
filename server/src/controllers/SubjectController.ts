@@ -21,43 +21,42 @@ const subjectSchema = z.object({
   units: z.array(unitSchema).optional(),
 });
 
-/**
- * LALA Quiz Pro - Subject Controller
- * Manages curriculum hierarchy and access control
- */
+function stripAnswers(unit) {
+  const plain = unit.toObject ? unit.toObject() : unit;
+  const questions = plain.questions.map(function (q) {
+    const options = q.options.map(function (o) {
+      return { text: o.text };
+    });
+    return Object.assign({}, q, { options: options });
+  });
+  return Object.assign({}, plain, { questions: questions });
+}
+
 export const SubjectController = {
-  // Get all subjects filtered by student stream
-  getSubjects: async (req: Request, res: Response) => {
+  getSubjects: async (req, res) => {
     try {
-      const { stream } = req.user!;
-      const subjects = await Subject.find({ stream }).select('-units.questions.options.isCorrect');
+      const stream = req.user.stream;
+      const subjects = await Subject.find({ stream: stream }).select('-units.questions.options.isCorrect');
       res.status(200).json(subjects);
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch subjects' });
     }
   },
 
-  // Get detailed unit syllabus (correct answers stripped for students)
-  getUnitDetails: async (req: Request, res: Response) => {
+  getUnitDetails: async (req, res) => {
     try {
-      const { subjectId, unitId } = req.params;
+      const subjectId = req.params.subjectId;
+      const unitId = req.params.unitId;
       const subject = await Subject.findById(subjectId);
       if (!subject) return res.status(404).json({ error: 'Subject not found' });
 
-      const unit = subject.units.id(unitId);
+      const unit = subject.units.find(function (u) {
+        return String(u._id) === unitId;
+      });
       if (!unit) return res.status(404).json({ error: 'Unit not found' });
 
-      // Never leak isCorrect to a non-admin caller.
-      const sanitized =
-        req.user!.role === 'admin'
-          ? unit
-          : {
-              ...unit.toObject(),
-              questions: unit.questions.map((q) => ({
-                ...q,
-                options: q.options.map((o) => ({ text: o.text })),
-              })),
-            };
+      const isAdmin = req.user.role === 'admin';
+      const sanitized = isAdmin ? unit : stripAnswers(unit);
 
       res.status(200).json(sanitized);
     } catch (error) {
@@ -65,32 +64,30 @@ export const SubjectController = {
     }
   },
 
-  // Admin: Create new subject
-  createSubject: async (req: Request, res: Response) => {
+  createSubject: async (req, res) => {
     try {
       const parsed = subjectSchema.parse(req.body);
       const newSubject = new Subject(parsed);
       await newSubject.save();
       res.status(201).json(newSubject);
     } catch (error: any) {
-      if (error?.issues) return res.status(400).json({ error: 'Invalid subject data', details: error.issues });
+      if (error && error.issues) return res.status(400).json({ error: 'Invalid subject data', details: error.issues });
       res.status(400).json({ error: 'Invalid subject data' });
     }
   },
 
-  // Admin: Add unit to subject
-  addUnit: async (req: Request, res: Response) => {
+  addUnit: async (req, res) => {
     try {
-      const { subjectId } = req.params;
+      const subjectId = req.params.subjectId;
       const parsed = unitSchema.parse(req.body);
       const subject = await Subject.findById(subjectId);
       if (!subject) return res.status(404).json({ error: 'Subject not found' });
 
-      subject.units.push(parsed as any);
+      subject.units.push(parsed);
       await subject.save();
       res.status(200).json(subject);
     } catch (error: any) {
-      if (error?.issues) return res.status(400).json({ error: 'Invalid unit data', details: error.issues });
+      if (error && error.issues) return res.status(400).json({ error: 'Invalid unit data', details: error.issues });
       res.status(400).json({ error: 'Failed to add unit' });
     }
   },
