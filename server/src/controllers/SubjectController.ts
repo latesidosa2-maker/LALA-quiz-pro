@@ -83,7 +83,7 @@ export const SubjectController = {
       const subject = await Subject.findById(subjectId);
       if (!subject) return res.status(404).json({ error: 'Subject not found' });
 
-      subject.units.push(parsed);
+      subject.units.push(parsed as any);
       await subject.save();
       res.status(200).json(subject);
     } catch (error: any) {
